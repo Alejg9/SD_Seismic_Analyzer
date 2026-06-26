@@ -1,7 +1,7 @@
-FROM rocm/pytorch:rocm7.2.3_ubuntu24.04_py3.12_pytorch_release_2.10.0
+FROM pytorch/pytorch:2.10.0-cuda13.0-cudnn9-runtime
 
 WORKDIR /app
 
 LABEL authors="aleja"
 
-RUN pip install --no-cache-dir numpy polars xarray opencv-python PyWavelets ptwt pyzgy plotly streamlit
+RUN pip install --break-system-packages --no-cache-dir numpy polars xarray opencv-python-headless PyWavelets ptwt pyzgy plotly streamlit

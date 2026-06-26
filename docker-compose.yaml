@@ -1,9 +1,7 @@
 services:
   seismic_analyzer:
     build: .
-    devices:
-      - /dev/kfd
-      - /dev/dri
+    runtime: nvidia
 
     volumes:
       - ./app:/app/
