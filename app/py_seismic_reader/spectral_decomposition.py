@@ -26,6 +26,7 @@ class Cube(ZGYCube):
 
 
         self.well_locations_df = df
+        self.wells = df[df.columns[0]].unique().to_list()
 
     def get_image(self,dim_index: int, var:str='raw_data', dim:str = 'iline'):
 
@@ -35,14 +36,25 @@ class Cube(ZGYCube):
 
         return img.T.transpose(1, 2, 0), raw_img
 
-    def plot_trace(self, inline: int, crossline: int):
+    def plot_trace(self, inline: int, crossline: int,well_name, log):
+        if log == 'Sísmica Original' or log is None:
+            trace = self.ds['raw_data'].sel(iline=inline, xline=crossline).values
+            time = self.time_cuda.cpu().numpy()
+        else:
+            las_df = self.las[well_name].filter(
+                pl.col('TWT').is_not_null()
+            ).sort(
+                by='TWT'
+            )
 
-        trace = self.ds['raw_data'].sel(iline=inline, xline=crossline)
-        time = self.time_cuda.cpu().numpy()
+            time = las_df['TWT'].to_numpy()
+            trace = las_df[log].to_numpy()
+
         fig = px.line(
             y=time,
-            x=trace.values,
-            height=1024
+            x=trace,
+            height=1024,
+            range_y=[self.time_cuda.min().cpu().numpy(), self.time_cuda.max().cpu().numpy()],
         )
 
         fig.update_yaxes(autorange="reversed", title='Tiempo (ms)')
@@ -59,14 +71,21 @@ class Cube(ZGYCube):
             agg: str | None = None,
             output_freq: float | None = None,
             return_phase: bool | None = None,
+            time_slider: int | None = None,
+            return_matr: bool = False
     ):
         trace = self.ds['raw_data'].sel({dim: dim_index}).values
         trace = torch.as_tensor(trace, dtype=torch.float32).cuda()
 
+        time = self.time_cuda
+
+        if time_slider is not None:
+            time = time - torch.as_tensor(time_slider, dtype=torch.float32).cuda()
+
         cwtmatr, freqs = self._calculate_cwt_cached(
             wavelet= wavelet,
             trace=trace,
-            time=self.time_cuda
+            time=time
         )
 
         abscwtmatr = torch.abs(cwtmatr)
@@ -85,7 +104,6 @@ class Cube(ZGYCube):
                 raise Exception(f'Not output_freq given.\n {output_freq}')
             idx = torch.argmin(torch.abs(freqs - output_freq))
             abscwtmatr = abscwtmatr[idx]
-            print(abscwtmatr)
         fig = make_subplots(
             rows=2 if return_phase else 1,
             cols=1,
@@ -101,9 +119,17 @@ class Cube(ZGYCube):
         fig.add_trace(
             go.Heatmap(
                 z=abscwtmatr.cpu().numpy().T,
-                x=freqs.cpu(),
+                x=self.ds['xline' if dim == 'iline' else 'iline'],
                 y=self.time_cuda.cpu().numpy(),
-                colorscale=[[0, 'rgb(255,255,255)'], [1, 'rgb(255,0,0)']],
+                colorscale=[
+                    # [0, 'rgb(0,247,255)'],
+                    # [0.345959396, 'rgb(0,0,204)'],
+                    # [0.407575638, 'rgb(100,100,100)'],
+                    [0, 'rgb(222,222,222)'],
+                    [0.3, 'rgb(102,51,0)'],
+                    [0.5, 'rgb(255,0,0)'],
+                    [1, 'rgb(255,255,0)']
+                ],
                 colorbar=dict(
                     title="|CWT|",
                     x=1.02,  # Barra del primer heatmap
@@ -112,6 +138,30 @@ class Cube(ZGYCube):
                 )
             )
         )
+
+        if st.session_state.current_well and self.fm_df is not None and self.well_locations_df is not None:
+            fm_df = self.fm_df.filter(pl.col('WellName') == st.session_state.current_well)
+            well_location = self.well_locations_df.filter(pl.col('WellName') == st.session_state.current_well)
+            for row in fm_df.iter_rows(named=True):
+                fm_name = row['FmName']
+                twt = row['TWT']
+                iline = well_location['Inline'].to_list()[0]
+                xline = well_location['Xline'].to_list()[0]
+
+                if dim == 'iline':
+                    val = xline
+                elif dim == 'xline':
+                    val = iline
+                else:
+                    raise
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=[val],
+                        y=[twt],
+                        name=fm_name,
+                    )
+                )
         if return_phase:
             phase = torch.angle(cwtmatr)
             phase = torch.cos(phase)
@@ -164,6 +214,9 @@ class Cube(ZGYCube):
             autorange="reversed"
         )
 
+        if return_matr:
+            return abscwtmatr.cpu().numpy().T
+
         return fig
     def plot_cwt(self, inline: int, crossline: int, wavelet: str):
         trace = self.ds['raw_data'].sel(iline=inline, xline=crossline).values
@@ -173,12 +226,7 @@ class Cube(ZGYCube):
             self.time_cuda
         )
 
-        fig = make_subplots(
-            rows=2,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05
-        )
+        fig = go.Figure()
 
         fig.add_trace(
             go.Heatmap(
@@ -193,13 +241,19 @@ class Cube(ZGYCube):
                     y=0.78,
                     len=0.42
                 )
-            ),
-            row=1,
-            col=1
+            )
         )
 
+        fig.update_layout(
+            height=1024,
+        )
+        fig.update_yaxes(autorange="reversed")
+
+        figs = (fig, None)
+
         if cwtmatr.is_complex():
-            fig.add_trace(
+            fig0 = go.Figure()
+            fig0.add_trace(
                 go.Heatmap(
                     z=torch.cos(torch.angle(cwtmatr)).T.cpu(),
                     x=freqs.cpu(),
@@ -207,24 +261,19 @@ class Cube(ZGYCube):
                     colorscale=[[0, 'rgb(255,255,255)'], [1, 'rgb(0,0,0)']],
                     name='Coseno de la fase de CWT compleja',
                     colorbar=dict(
-                        title="Imag",
+                        title="Cos-Phase",
                         x=2.02,  # Misma columna, pero más abajo
                         y=0.22,
                         len=0.42
                     )
-                ),
-                row=2,
-                col=1
+                )
             )
 
-            fig.update_yaxes(autorange="reversed", row=2, col=1)
-        fig.update_layout(
-            height=2048,
-        )
-        fig.update_yaxes(autorange="reversed", row=1, col=1)
+            fig0.update_yaxes(autorange="reversed")
+            fig0.update_layout(height=1024)
+            figs = (fig, fig0)
 
-
-        return fig
+        return figs
 
     def add_tops_to_fig(self, fig, well_name, x, subplot_row=None, subplot_col=None):
 
@@ -234,9 +283,10 @@ class Cube(ZGYCube):
 
             trace = go.Scatter(
                 x=x,
-                y=[fm["twt"], fm["twt"]],
+                y=[fm["TWT"], fm["TWT"]],
                 mode="lines",
-                name=fm["FmName"]
+                name=fm["FmName"],
+
             )
 
             if subplot_row is not None and subplot_col is not None:
@@ -244,6 +294,12 @@ class Cube(ZGYCube):
             else:
                 fig.add_trace(trace)
 
+        fig.update_yaxes(
+            range=[
+                self.time_cuda.min().cpu(),
+                self.time_cuda.max().cpu()
+            ]
+        )
         return fig
 
     @staticmethod
@@ -278,7 +334,7 @@ class Cube(ZGYCube):
         return _processed, phase
     def load_fm_df(self, path: str, has_header: bool = False, separator: str = '\t'):
         df = pl.read_csv(path, has_header=has_header, separator=separator)
-        header: list = ['WellName', 'FmName', 'depth', 'tvdss', 'twt']
+        header: list = ['WellName', 'FmName', 'depth','TWT']
         df.columns = header
 
         self.fm_df = df
@@ -387,6 +443,8 @@ class Cube(ZGYCube):
                     batch,
                     output_frequency
                 )  # (batch, time)
+
+                _processed = torch.abs(_processed)
             elif type(output_frequency) == list:
                 _processed = self._calculate_cwts_mean(
                     wavelet,
@@ -400,6 +458,7 @@ class Cube(ZGYCube):
             if include_phase:
                 _processed, phase = _processed
                 r_phase[i:i + batch_size] = phase
+
             result[i:i + batch_size] = _processed.cpu()
 
             del batch, _processed
@@ -539,6 +598,7 @@ class Cube(ZGYCube):
 
         idx = torch.argmin(torch.abs(freqs - output_frequency))
         cwtmatr = cwtmatr[idx, :, :]
+
         return cwtmatr
 
     def _calculate_cwt_cached(self, wavelet, trace, time):

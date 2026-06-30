@@ -2,8 +2,7 @@ import streamlit as st
 import json
 import os
 
-from py_seismic_reader.spectral_decomposition import Cube
-
+from .utils import open_project
 
 def start_window():
     st.header("Proyectos")
@@ -13,23 +12,7 @@ def start_window():
             st.text(project)
 
             if st.button('Abrir proyecto', key=f'open_{project}'):
-                st.session_state.project = project
-                st.session_state.project_path = os.path.join("/app/projects", project)
-
-                config = json.load(open("/app/projects/" + project + '/config.json'))['paths']
-
-                if config['main_zgy']:
-                    cube = Cube(config['main_zgy'])
-
-                    if config['well_locations_df']:
-                        cube.load_well_location(config['well_locations_df'])
-                    if config['fm_df']:
-                        cube.load_fm_df(config['fm_df'], has_header=True, separator=',')
-                    st.session_state.dims = list(
-                        cube.ds.dims.keys()
-                    )
-                    st.session_state.cube = cube
-                    st.rerun()
+               open_project(project)
     else:
         st.text("Aún no tienes proyectos")
 
@@ -54,3 +37,4 @@ def start_window():
 
             with open(project_path + "/config.json", "w") as fp:
                 json.dump(initial_dict, fp)
+        st.rerun()

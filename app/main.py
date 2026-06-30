@@ -8,6 +8,7 @@ from visualizer.cwt import cwt_view
 from visualizer.spectral_decomposition import spectral_decomposicion_view
 from visualizer.wells import well_view
 from visualizer.init import start_window
+from visualizer.rgb_blend import blend_view
 import json
 import os
 import polars as pl
@@ -34,6 +35,9 @@ if 'project' in st.session_state:
                         'main_zgy': os.path.join(project_dir, 'main.zgy'),
                         'fm_df': os.path.join(project_dir, 'fm_df.csv') if cube.fm_df is not None else None,
                         'well_locations_df': os.path.join(project_dir, 'well_locations_df.csv') if cube.well_locations_df is not None else None,
+                        'check_shots_dfs': [(os.path.join(project_dir, f'{k}_checkshot.csv'), k) for k in cube.check_shots.keys()],
+                        'las_dfs': [(os.path.join(project_dir, f'{k}_las.csv'), k) for k in
+                                            cube.las.keys()],
                     }
                 }
 
@@ -47,6 +51,13 @@ if 'project' in st.session_state:
                 if cube.well_locations_df is not None:
                     well_locations_df: pl.DataFrame = cube.well_locations_df
                     well_locations_df.write_csv(os.path.join(project_dir, 'well_locations_df.csv'))
+
+                if len(cube.check_shots) > 0:
+                    for k, v in cube.check_shots.items():
+                        v.write_csv(os.path.join(project_dir, f'{k}_checkshot.csv'))
+                if len(cube.las) > 0:
+                    for k, v in cube.las.items():
+                        v.write_csv(os.path.join(project_dir, f'{k}_las.csv'))
                 with open("/app/projects/" + st.session_state.project + '/config.json', 'w') as fp:
                     json.dump(initial_dict, fp)
 
@@ -55,26 +66,39 @@ else:
 row = st.columns(2, vertical_alignment="center")
 
 # ===== SIDEBAR MENU =====
-menu = st.sidebar.selectbox(
-    "Menú",
-    ["Inicio","Carga de archivos", "Visualizador", "Escalogramas", "Descomposición espectral"]
-)
+
+options = ["Inicio"]
+
+if "project" in st.session_state:
+    options.append("Carga de archivos")
+
+if "cube" in st.session_state:
+    options.extend([
+        "Visualizador",
+        "Escalogramas",
+        "Descomposición espectral",
+        "RGB Blend",
+    ])
+
+menu = st.sidebar.selectbox("Menú", options)
 
 # ===== CONTENIDO PRINCIPAL =====
-if menu == 'Inicio':
+if menu == "Inicio":
     start_window()
 
 elif menu == "Carga de archivos":
     well_view()
-elif menu == "Visualizador":
-    st.title("Modulo Sismico")
 
+elif menu == "Visualizador":
+    st.session_state.view_section = True
+    st.title("Módulo Sísmico")
     seismic_visualizer()
 
 elif menu == "Escalogramas":
     cwt_view()
 
-
-
 elif menu == "Descomposición espectral":
     spectral_decomposicion_view()
+
+elif menu == 'RGB Blend':
+    blend_view()
