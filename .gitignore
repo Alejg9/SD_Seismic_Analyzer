@@ -1,0 +1,4 @@
+app/projects/
+.idea/
+
+__pycache__/
